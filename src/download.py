@@ -4,10 +4,12 @@ import multiprocessing
 import os
 import traceback
 import xml.dom.minidom
+import zipfile
 
 import requests
 
 download_base_dir = "/Users/eryk/data/rawdata/"
+unzip_base_dir = "/Users/eryk/data/market_data/"
 base_url = "https://s3-ap-northeast-1.amazonaws.com/data.binance.vision?delimiter=/&prefix="
 zip_base_url = "https://data.binance.vision/"
 market_list = ["spot", "futures/cm", "futures/um"]
@@ -54,6 +56,16 @@ def file_stat(path, time_fmt=False):
             mtime = int(mtime * 1e6)
         return {'mtime': mtime, 'atime': atime, 'ctime': ctime, 'size': size}
 
+def decompress_zip(file_name, unzip_path):
+    """unzip zip file"""
+    zip_file = zipfile.ZipFile(file_name)
+    if os.path.isdir(unzip_path):
+        pass
+    else:
+        mkdir(unzip_path)
+    for names in zip_file.namelist():
+        zip_file.extract(names, unzip_path)
+    zip_file.close()
 
 def download_zip(zip_url_suffix, target_dir):
     try:
@@ -98,9 +110,17 @@ def check_zip_dir():
 
 
 def unzip_dir():
-    for market in market_list:
-        for fp in glob.glob("%s%s/*/*.zip" % (download_base_dir, market)):
-            print(fp)
+    for market in market_list[:1]:
+        for fp in glob.glob("%s%s/*/*.zip" % (download_base_dir, market))[:1]:
+            fields = fp.split("/")[-1].split("-")
+            market = fp.split("/")[-3]
+            (pair, data_type, bizdate) = fields[0], fields[1], "".join(fields[2:])[:-4]
+            unzip_dir = "%s%s/%s/%s" % (unzip_base_dir, market, pair, data_type)
+            mkdir(unzip_dir)
+            unzip_fp = unzip_dir + "/" + fp.split("/")[-1][:-4] + '.csv'
+            if not exists(unzip_fp):
+                print("unzip:", unzip_fp)
+                decompress_zip(fp, unzip_dir)
 
 
 def fetch_pair_list_url(market, data_type, period):
@@ -113,7 +133,7 @@ def fetch_pair_list_url(market, data_type, period):
     nodes = dom.documentElement.getElementsByTagName("Prefix")
     pairs = []
 
-    pool = multiprocessing.Pool(processes=3)
+    pool = multiprocessing.Pool(processes=8)
     for url in nodes[1:]:
         url_str = url.firstChild.nodeValue
         pairs.append(url_str.split('/')[-2])
@@ -140,7 +160,6 @@ def fetch_pair_list_url(market, data_type, period):
         print(failed_zip_url)
     pool.close()
     pool.join()
-
 
 
 def fetch_pair_daily_list(url):
