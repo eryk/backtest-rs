@@ -1,8 +1,11 @@
+import glob
+import hashlib
+import multiprocessing
 import os
 import traceback
+import xml.dom.minidom
 
 import requests
-import xml.dom.minidom
 
 download_base_dir = "/Users/eryk/data/rawdata/"
 base_url = "https://s3-ap-northeast-1.amazonaws.com/data.binance.vision?delimiter=/&prefix="
@@ -74,6 +77,32 @@ def download_zip(zip_url_suffix, target_dir):
     return True, ""
 
 
+def checksum(checksum_path):
+    with open(checksum_path, "r") as f:
+        fields = f.readline().split(" ")
+        (shasum, filename) = list(filter(lambda field: field != "", fields))[:2]
+        sha256_hash = hashlib.sha256()
+        with open(checksum_path[:-9], "rb") as f:
+            for byte_block in iter(lambda: f.read(4096), b""):
+                sha256_hash.update(byte_block)
+            if shasum != sha256_hash.hexdigest():
+                print("checksum error: %s" % checksum_path[:-9])
+                return False
+    return True
+
+
+def check_zip_dir():
+    for market in market_list:
+        for fp in glob.glob("%s%s/*/*.CHECKSUM" % (download_base_dir, market)):
+            checksum(fp)
+
+
+def unzip_dir():
+    for market in market_list:
+        for fp in glob.glob("%s%s/*/*.zip" % (download_base_dir, market)):
+            print(fp)
+
+
 def fetch_pair_list_url(market, data_type, period):
     fetch_url = "%sdata/%s/daily/%s/" % (base_url, market, data_type)
     print("process:", fetch_url)
@@ -83,19 +112,25 @@ def fetch_pair_list_url(market, data_type, period):
     dom = xml.dom.minidom.parseString(response.content)
     nodes = dom.documentElement.getElementsByTagName("Prefix")
     pairs = []
+
+    pool = multiprocessing.Pool(processes=3)
     for url in nodes[1:]:
         url_str = url.firstChild.nodeValue
         pairs.append(url_str.split('/')[-2])
     for pair in pairs[:]:
+        if not (pair.endswith('BTC')) or pair.endswith("USDT"):
+            continue
         download_counter = {"total": 0, "success": 0, "error": 0}
         failed_zip_url = []
-
+        result = []
         data_type_detail_url = "%s%s/%s/" % (fetch_url, pair, period)
         zip_list = fetch_pair_daily_list(data_type_detail_url)
         for url in zip_list:
             bizdate = "".join(url.split('-')[-3:])[:-4]
-            is_success, zip_url_suffix = download_zip(url, "%s%s/%s" % (download_base_dir, market, bizdate))
+            result.append(pool.apply_async(download_zip, (url, "%s%s/%s" % (download_base_dir, market, bizdate))))
             download_counter['total'] += 1
+        for res in result:
+            is_success, zip_url_suffix = res.get()
             if is_success:
                 download_counter['success'] += 1
             else:
@@ -103,6 +138,9 @@ def fetch_pair_list_url(market, data_type, period):
                 failed_zip_url.append(zip_url_suffix)
         print(download_counter)
         print(failed_zip_url)
+    pool.close()
+    pool.join()
+
 
 
 def fetch_pair_daily_list(url):
@@ -133,3 +171,5 @@ def daily_update():
 
 if __name__ == '__main__':
     download_history()
+    check_zip_dir()
+    unzip_dir()
