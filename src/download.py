@@ -2,6 +2,7 @@ import glob
 import hashlib
 import multiprocessing
 import os
+import time
 import traceback
 import xml.dom.minidom
 import zipfile
@@ -145,6 +146,8 @@ def fetch_pair_list_url(market, data_type, period):
         result = []
         data_type_detail_url = "%s%s/%s/" % (fetch_url, pair, period)
         zip_list = fetch_pair_daily_list(data_type_detail_url)
+        if zip_list is None:
+            continue
         for url in zip_list:
             bizdate = "".join(url.split('-')[-3:])[:-4]
             result.append(pool.apply_async(download_zip, (url, "%s%s/%s" % (download_base_dir, market, bizdate))))
@@ -163,17 +166,27 @@ def fetch_pair_list_url(market, data_type, period):
 
 
 def fetch_pair_daily_list(url):
-    response = requests.get(url)
-    if response.status_code != 200:
-        print("err:", url)
-    dom = xml.dom.minidom.parseString(response.content)
-    nodes = dom.documentElement.getElementsByTagName("Key")
-    results = []
-    for node in nodes:
-        url = node.firstChild.nodeValue
-        if url.endswith(".zip"):
-            results.append(url)
-    return results
+    print("fetch_pair_daily_list:", url)
+    retry = 0
+    while retry <= 3:
+        try:
+            response = requests.get(url)
+            if response.status_code != 200:
+                print("err:", url)
+            dom = xml.dom.minidom.parseString(response.content)
+            nodes = dom.documentElement.getElementsByTagName("Key")
+            results = []
+            for node in nodes:
+                url = node.firstChild.nodeValue
+                if url.endswith(".zip"):
+                    results.append(url)
+            return results
+        except Exception as e:
+            print(traceback.format_exc())
+            retry += 1
+            time.sleep(retry)
+    print("failed to fetch_pair_daily_list:", url)
+
 
 
 def download_history():
